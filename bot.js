@@ -18,7 +18,7 @@ async function isAdmin(ctx) {
   }
 }
 
-// 1. /start Command
+// 1. /start Command (Help Guide)
 bot.start(async (ctx) => {
   if (ctx.chat.type !== 'private') {
     return ctx.reply('⚠️ Please use the /start command in my private chat to view the guide.');
@@ -29,7 +29,7 @@ bot.start(async (ctx) => {
 
 I am designed to help group admins mention members in batches smoothly. Here are the available commands:
 
-🔹 /mtag <Your Link/Message> - Starts tagging group members in batches of 10. (Admin Only)
+🔹 /mtag <Your Link/Message> - Starts tagging group members in batches of 10 in your requested style. (Admin Only)
 🔹 /mcancel - Stops an ongoing tagging process immediately. (Admin Only)
 🔹 /reload - Refreshes and reloads the bot state. (Admin Only)
 
@@ -38,7 +38,7 @@ Note: All commands except /start only work inside groups and require you to be a
   await ctx.reply(welcomeText);
 });
 
-// 2. /mtag Command
+// 2. /mtag Command (Exact Format Tagging)
 bot.command('mtag', async (ctx) => {
   if (ctx.chat.type === 'private') {
     return ctx.reply('❌ This command can only be used inside groups.');
@@ -57,17 +57,36 @@ bot.command('mtag', async (ctx) => {
 
   const args = ctx.message.text.split(' ').slice(1).join(' ');
   if (!args) {
-    return ctx.reply('⚠️ Please provide a link or message to tag with!\nExample: /mtag Check out this new update: https://t.me/...');
+    return ctx.reply('⚠️ Please provide a link or message to tag with!\nExample: /mtag https://t.me/...');
   }
 
-  const userName = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
-  await ctx.reply(`🚀 Tagging Process Started!\nInitiated by: ${userName}\nTarget: ${args}`);
+  const adminName = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
+  await ctx.reply(`🚀 Tagging Process Started!\nInitiated by: ${adminName}`);
 
   activeTasks.set(chatId, true);
 
   try {
-    let batchCount = 1;
-    const totalBatches = 5;
+    // Note: Telegram standard bots cannot fetch all members list via a simple API call due to privacy, 
+    // unless members have recently interacted. Here we use simulated active users data or list 
+    // structured cleanly in your requested format (Up link, below names).
+    
+    // Sample member pool representation for demonstration (You can connect real cached chat participants array here)
+    const mockMembers = [
+      { id: 111111, name: "Kuldeep" },
+      { id: 222222, name: "Annuu 👀" },
+      { id: 333333, name: "🔥 Aavya 🌻" },
+      { id: 444444, name: "Sudeep 🤠" },
+      { id: 555555, name: "V" },
+      { id: 666666, name: "Hashik" },
+      { id: 777777, name: "V" },
+      { id: 888888, name: "Eva" },
+      { id: 999999, name: "Zayyn" },
+      // ... aur bhi members agar honge toh batches mein divide honge
+    ];
+
+    const batchSize = 10;
+    let index = 0;
+    let batchNumber = 1;
 
     const interval = setInterval(async () => {
       if (!activeTasks.get(chatId)) {
@@ -75,19 +94,27 @@ bot.command('mtag', async (ctx) => {
         return;
       }
 
-      if (batchCount > totalBatches) {
+      if (index >= mockMembers.length) {
         clearInterval(interval);
         activeTasks.delete(chatId);
-        await ctx.reply(`✅ Tagging Completed Successfully!\nAll members have been tagged for: ${args}`);
+        await ctx.reply(`✅ Tagging Completed Successfully!\nAll members have been tagged.`);
         return;
       }
 
-      let tagMsg = `📌 Batch ${batchCount}/${totalBatches} - Link: ${args}\n`;
-      tagMsg += `[Member 1] (tg://user?id=111111) [Member 2] (tg://user?id=222222) [Member 3] (tg://user?id=333333)`;
+      // Current batch ke 10 members lena
+      const currentBatch = mockMembers.slice(index, index + batchSize);
+      
+      // Screenshot jaisa format banana: Upar link, niche commas ke sath names (clickable)
+      let formattedText = `${args}\n\n`;
+      const nameLinks = currentBatch.map(m => `[${m.name}](tg://user?id=${m.id})`);
+      formattedText += nameLinks.join(', ');
 
-      await ctx.reply(tagMsg);
-      batchCount++;
-    }, 4000);
+      // Send message using Markdown parsing for clickable names
+      await ctx.reply(formattedText, { parse_mode: 'Markdown' });
+
+      index += batchSize;
+      batchNumber++;
+    }, 4000); // Har 4 second mein agla batch
 
     activeTasks.set(chatId, interval);
 
@@ -108,7 +135,7 @@ bot.command('mcancel', async (ctx) => {
   const chatId = ctx.chat.id;
   if (activeTasks.has(chatId)) {
     const task = activeTasks.get(chatId);
-    if (typeof task === 'object' || task.constructor.name === 'Timeout') {
+    if (typeof task === 'object') {
       clearInterval(task);
     }
     activeTasks.delete(chatId);

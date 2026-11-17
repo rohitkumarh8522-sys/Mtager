@@ -29,7 +29,7 @@ bot.on('message', async (ctx, next) => {
   const chatId = ctx.chat.id;
   activeGroups.add(chatId);
 
-  // Bot ko group me add kiye jane par welcome message
+  // Bot ko group me add kiye jane par welcome message aur purana delete karna
   if (ctx.message.new_chat_members) {
     const botInfo = await bot.telegram.getMe();
     const isBotAdded = ctx.message.new_chat_members.some(m => m.id === botInfo.id);
@@ -41,13 +41,26 @@ bot.on('message', async (ctx, next) => {
         } catch (e) {}
       }
 
+      const botUsername = botInfo.username;
       const welcomeGroupMsg = await ctx.reply(
-`┏ { 🤖 **Utag Pro & Security** }
-┃
-┣ 🛡️ **Status:** Active & Ready
-┣ 🟢 **START:** \`/tagall\` or \`/run\`
-┗ 🔴 **STOP :** \`/stop\``, 
-        { parse_mode: 'Markdown' }
+`╭─❲ 🤖 Uᴛᴀɢ Pʀᴏ ❳
+│
+│ 🛡️ Status: Protected & Ready
+│ 🟢 Start: /tagall or /run
+│ 🔴 Stop : /stop
+│
+╰─── Active ───`, 
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '➕ Add Me', url: `https://t.me/${botUsername}?startgroup=true` },
+                { text: '🛠️ Support', url: 'https://t.me/MR_STARK_001' } // Yahan apna support link ya username daal sakte hain
+              ]
+            ]
+          }
+        }
       );
       
       lastBotWelcomeMsg.set(chatId, welcomeGroupMsg.message_id);
@@ -121,24 +134,36 @@ bot.on('message', async (ctx, next) => {
   return next();
 });
 
-// 1. /start Command (Personal Chat Style)
+// 1. /start Command (Aapke screen jaisa exact stylish format with 2 Buttons)
 bot.start(async (ctx) => {
   if (ctx.chat.type !== 'private') return;
 
   const userName = ctx.from.first_name || 'User';
+  const botInfo = await bot.telegram.getMe();
+  const botUsername = botInfo.username;
   
   const welcomeText = 
-`┏ { 🤖 **Utag Pro** }
-┃
-┣ 👏 **Hi: ${userName}** 🍃
-┣ ⚡ **Engine: Own**
-┃
-┣ 🟢 **START:** \`/tagall\` or \`/run\`
-┗ 🔴 **STOP :** \`/stop\`
+`╭─❲ 🤖 Uᴛᴀɢ Pʀᴏ ❳
+│
+│ 👋 Hɪ: ${userName} 🍃
+│ ⚡ Eɴɢɪɴᴇ: Own
+│
+│ 🟢 Sᴛᴀʀᴛ: /tagall or /run
+│ 🔴 Sᴛᴏᴘ : /stop
+│
+╰─── Rᴇᴘʟʏ ᴛ𝐨 Sᴛᴀʀᴛ ───`;
 
-—— **REPLY TO START** ——`;
-
-  await ctx.reply(welcomeText, { parse_mode: 'Markdown' });
+  await ctx.reply(welcomeText, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '➕ Add Me', url: `https://t.me/${botUsername}?startgroup=true` },
+          { text: '🛠️ Support', url: 'https://t.me/MR_STARK_001' }
+        ]
+      ]
+    }
+  });
 });
 
 // 2. /tagall or /run Command (Batch Tagging with Screenshot Format)
@@ -194,7 +219,7 @@ const handleTagStart = async (ctx) => {
 
       const currentBatch = membersList.slice(index, index + batchSize);
       
-      // Screenshot format: Upar link/message, niche commas ke sath clickable names
+      // Screenshot format: Upar link/message, niche commas ke sath clickable names[span_2](start_span)[span_2](end_span)
       let formattedText = `${args}\n\n`;
       const nameLinks = currentBatch.map(m => `[${m.name}](tg://user?id=${m.id})`);
       formattedText += nameLinks.join(', ');

@@ -8,7 +8,10 @@ const bot = new Telegraf(BOT_TOKEN);
 const activeTasks = new Map();
 const activeGroups = new Set();
 const groupMembers = new Map(); // chatId -> Map(userId -> name)
+const userLastMessage = new Map(); // Spam detection ke liye
+const lastBotWelcomeMsg = new Map(); // Purana welcome message delete karne ke liye
 
+// Helper: Check if user is admin
 async function isAdmin(ctx) {
   if (ctx.chat.type === 'private') return false;
   try {
@@ -19,11 +22,40 @@ async function isAdmin(ctx) {
   }
 }
 
-// ग्रुप के हर मैसेज पर मेंबर्स को कलेक्ट करना
-bot.on('message', (ctx, next) => {
-  if (ctx.chat && ctx.chat.type !== 'private' && ctx.from) {
-    const chatId = ctx.chat.id;
-    activeGroups.add(chatId); // ग्रुप ट्रैक करना
+// Group ke har message par members collect karna aur security check lagana
+bot.on('message', async (ctx, next) => {
+  if (!ctx.chat || ctx.chat.type === 'private') return next();
+
+  const chatId = ctx.chat.id;
+  activeGroups.add(chatId);
+
+  // Bot ko group me add kiye jane par welcome message
+  if (ctx.message.new_chat_members) {
+    const botInfo = await bot.telegram.getMe();
+    const isBotAdded = ctx.message.new_chat_members.some(m => m.id === botInfo.id);
+
+    if (isBotAdded) {
+      if (lastBotWelcomeMsg.has(chatId)) {
+        try {
+          await ctx.telegram.deleteMessage(chatId, lastBotWelcomeMsg.get(chatId));
+        } catch (e) {}
+      }
+
+      const welcomeGroupMsg = await ctx.reply(
+`┏ { 🤖 **Utag Pro & Security** }
+┃
+┣ 🛡️ **Status:** Active & Ready
+┣ 🟢 **START:** \`/tagall\` or \`/run\`
+┗ 🔴 **STOP :** \`/stop\``, 
+        { parse_mode: 'Markdown' }
+      );
+      
+      lastBotWelcomeMsg.set(chatId, welcomeGroupMsg.message_id);
+      return;
+    }
+  }
+
+  if (ctx.from) {
     if (!groupMembers.has(chatId)) {
       groupMembers.set(chatId, new Map());
     }
@@ -31,14 +63,67 @@ bot.on('message', (ctx, next) => {
     const name = ctx.from.first_name + (ctx.from.last_name ? ' ' + ctx.from.last_name : '');
     membersMap.set(ctx.from.id, { id: ctx.from.id, name: name });
   }
+
+  // Agar user admin hai toh security rules skip honge
+  if (await isAdmin(ctx)) return next();
+
+  const userId = ctx.from.id;
+  const messageText = ctx.message.text || ctx.message.caption || '';
+  const urlRegex = /(https?:\/\/[^\s]+)|(t\.me\/[^\s]+)|(www\.[^\s]+)/gi;
+
+  // 1. Link Detection (Mute)
+  if (urlRegex.test(messageText)) {
+    try {
+      await ctx.deleteMessage();
+      await ctx.restrictChatMember(userId, { permissions: { can_send_messages: false } });
+      await ctx.reply(`⚠️ @${ctx.from.username || ctx.from.first_name} has been **Muted** for sending links!`, { parse_mode: 'Markdown' });
+    } catch (e) {}
+    return;
+  }
+
+  // 2. Forward Message Protection (Mute)
+  if (ctx.message.forward_date || ctx.message.forward_from || ctx.message.forward_from_chat) {
+    try {
+      await ctx.deleteMessage();
+      await ctx.restrictChatMember(userId, { permissions: { can_send_messages: false } });
+      await ctx.reply(`⚠️ @${ctx.from.username || ctx.from.first_name} has been **Muted** for forwarding messages!`, { parse_mode: 'Markdown' });
+    } catch (e) {}
+    return;
+  }
+
+  // 3. Bio-Link Protection (Ban)
+  try {
+    const chatMember = await ctx.telegram.getChat(userId);
+    const bio = chatMember.bio || '';
+    if (urlRegex.test(bio)) {
+      await ctx.deleteMessage();
+      await ctx.banChatMember(userId);
+      await ctx.reply(`🚫 @${ctx.from.username || ctx.from.first_name} has been **Banned** because their Bio contains a promotional link!`, { parse_mode: 'Markdown' });
+      return;
+    }
+  } catch (e) {}
+
+  // 4. Anti-Spam (Ban)
+  const currentTime = Date.now();
+  if (userLastMessage.has(userId)) {
+    const lastData = userLastMessage.get(userId);
+    if (lastData.text === messageText && (currentTime - lastData.time < 4000)) {
+      try {
+        await ctx.deleteMessage();
+        await ctx.banChatMember(userId);
+        await ctx.reply(`🚫 @${ctx.from.username || ctx.from.first_name} has been **Banned** for Spamming!`, { parse_mode: 'Markdown' });
+      } catch (e) {}
+      return;
+    }
+  }
+  userLastMessage.set(userId, { text: messageText, time: currentTime });
+
   return next();
 });
 
-// 1. /start Command (आपके स्क्रीनशॉट वाला स्टाइलिश फॉर्मेट)[span_0](start_span)[span_0](end_span)
+// 1. /start Command (Personal Chat Style)
 bot.start(async (ctx) => {
-  if (ctx.chat.type !== 'private') {
-    return ctx.reply('⚠️ Please use the /start command in my private chat.');
-  }
+  if (ctx.chat.type !== 'private') return;
 
   const userName = ctx.from.first_name || 'User';
   
@@ -56,7 +141,7 @@ bot.start(async (ctx) => {
   await ctx.reply(welcomeText, { parse_mode: 'Markdown' });
 });
 
-// 2. /tagall या /run Command (Real Members Batch Tagging)
+// 2. /tagall or /run Command (Batch Tagging with Screenshot Format)
 const handleTagStart = async (ctx) => {
   if (ctx.chat.type === 'private') {
     return ctx.reply('❌ This command can only be used inside groups.');
@@ -109,7 +194,7 @@ const handleTagStart = async (ctx) => {
 
       const currentBatch = membersList.slice(index, index + batchSize);
       
-      // स्क्रीनशॉट वाला फॉर्मेट: ऊपर लिंक/मैसेज, नीचे कॉमा लगाकर सबके क्लिकेबल नाम[span_1](start_span)[span_1](end_span)
+      // Screenshot format: Upar link/message, niche commas ke sath clickable names
       let formattedText = `${args}\n\n`;
       const nameLinks = currentBatch.map(m => `[${m.name}](tg://user?id=${m.id})`);
       formattedText += nameLinks.join(', ');
@@ -117,7 +202,7 @@ const handleTagStart = async (ctx) => {
       await ctx.reply(formattedText, { parse_mode: 'Markdown' });
 
       index += batchSize;
-    }, 4000); // 4 सेकंड का गैप
+    }, 4000); // 4 seconds gap
 
     activeTasks.set(chatId, interval);
 
@@ -130,7 +215,7 @@ const handleTagStart = async (ctx) => {
 bot.command('tagall', handleTagStart);
 bot.command('run', handleTagStart);
 
-// 3. /stop Command (Tagging रोकने के लिए)
+// 3. /stop Command
 bot.command('stop', async (ctx) => {
   if (ctx.chat.type === 'private') return;
   if (!(await isAdmin(ctx))) return ctx.reply('❌ Admin only.');
@@ -148,10 +233,10 @@ bot.command('stop', async (ctx) => {
   }
 });
 
-// 4. Owner Panel (/owner) - ओनर के लिए 2 एडवांस बटन्स के साथ
+// 4. Owner Panel (/owner) with 2 Advanced Buttons
 bot.command('owner', async (ctx) => {
   if (ctx.chat.type !== 'private') return;
-  if (ctx.from.id !== OWNER_ID) return ctx.reply('❌ Unauthorized.');
+  if (ctx.from.id !== OWNER_ID) return ctx.reply('❌ Unauthorized Access.');
 
   const ownerText = 
 `🛠️ **Bot Owner Control Panel**
@@ -162,7 +247,6 @@ bot.command('owner', async (ctx) => {
 
 Select an option below:`;
 
-  // ओनर के लिए 2 एडवांस बटन (Active Groups और Broadcast)
   await ctx.reply(ownerText, {
     parse_mode: 'Markdown',
     reply_markup: {
@@ -176,20 +260,19 @@ Select an option below:`;
   });
 });
 
-// Button Actions Handle करना
 bot.action('owner_groups', async (ctx) => {
   if (ctx.from.id !== OWNER_ID) return ctx.answerCbQuery('❌ Unauthorized.');
   await ctx.answerCbQuery();
-  await ctx.reply(`📋 **Total Active Groups:** ${activeGroups.size}\nAll connected group IDs are being tracked successfully.`);
+  await ctx.reply(`📋 **Total Active Groups:** ${activeGroups.size}\nAll active group sessions are running securely.`);
 });
 
 bot.action('owner_broadcast_prompt', async (ctx) => {
   if (ctx.from.id !== OWNER_ID) return ctx.answerCbQuery('❌ Unauthorized.');
   await ctx.answerCbQuery();
-  await ctx.reply(`📢 **Broadcast Feature:**\nTo broadcast a message to all groups, reply to this message with your text in format: \`/broadcast Your Message\``);
+  await ctx.reply(`📢 **Broadcast Guide:**\nSend your broadcast message using this format:\n\`/broadcast Your Message Here\``, { parse_mode: 'Markdown' });
 });
 
-// 5. Broadcast Command for Owner
+// Broadcast Command for Owner
 bot.command('broadcast', async (ctx) => {
   if (ctx.from.id !== OWNER_ID) return;
 
@@ -216,7 +299,7 @@ bot.command('broadcast', async (ctx) => {
 });
 
 bot.launch().then(() => {
-  console.log('🤖 Bot is up and running successfully!');
+  console.log('🤖 Utag Pro Tagger & Protection Bot is running successfully!');
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));

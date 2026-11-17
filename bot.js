@@ -7,7 +7,6 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const activeTasks = new Map();
 const activeGroups = new Set();
-// ग्रुप के मेंबर्स को सेव करने के लिए मेमोरी डेटाबेस
 const groupMembers = new Map(); // chatId -> Map(userId -> name)
 
 async function isAdmin(ctx) {
@@ -20,10 +19,11 @@ async function isAdmin(ctx) {
   }
 }
 
-// ग्रुप के हर मैसेज पर यूजर को कलेक्ट करना (ताकि टैग करने के लिए असली लोग मिल सकें)
+// ग्रुप के हर मैसेज पर मेंबर्स को कलेक्ट करना
 bot.on('message', (ctx, next) => {
   if (ctx.chat && ctx.chat.type !== 'private' && ctx.from) {
     const chatId = ctx.chat.id;
+    activeGroups.add(chatId); // ग्रुप ट्रैक करना
     if (!groupMembers.has(chatId)) {
       groupMembers.set(chatId, new Map());
     }
@@ -34,25 +34,30 @@ bot.on('message', (ctx, next) => {
   return next();
 });
 
-// 1. /start Command
+// 1. /start Command (आपके स्क्रीनशॉट वाला स्टाइलिश फॉर्मेट)[span_0](start_span)[span_0](end_span)
 bot.start(async (ctx) => {
   if (ctx.chat.type !== 'private') {
     return ctx.reply('⚠️ Please use the /start command in my private chat.');
   }
 
-  const welcomeText = 
-`🤖 Welcome to Mass Tagging Bot!
-
-Commands:
-🔹 /mtag <Message/Link> - Tags real group members in batches of 10 in your style. (Admin Only)
-🔹 /mcancel - Stops tagging. (Admin Only)
-🔹 /reload - Refreshes the bot. (Admin Only)`;
+  const userName = ctx.from.first_name || 'User';
   
-  await ctx.reply(welcomeText);
+  const welcomeText = 
+`┏ { 🤖 **Utag Pro** }
+┃
+┣ 👏 **Hi: ${userName}** 🍃
+┣ ⚡ **Engine: Own**
+┃
+┣ 🟢 **START:** \`/tagall\` or \`/run\`
+┗ 🔴 **STOP :** \`/stop\`
+
+—— **REPLY TO START** ——`;
+
+  await ctx.reply(welcomeText, { parse_mode: 'Markdown' });
 });
 
-// 2. /mtag Command (Real Members Tagging)
-bot.command('mtag', async (ctx) => {
+// 2. /tagall या /run Command (Real Members Batch Tagging)
+const handleTagStart = async (ctx) => {
   if (ctx.chat.type === 'private') {
     return ctx.reply('❌ This command can only be used inside groups.');
   }
@@ -65,24 +70,23 @@ bot.command('mtag', async (ctx) => {
   activeGroups.add(chatId);
 
   if (activeTasks.get(chatId)) {
-    return ctx.reply('⚠️ Tagging is already running. Use /mcancel to stop.');
+    return ctx.reply('⚠️ Tagging is already running. Use /stop to cancel.');
   }
 
   const args = ctx.message.text.split(' ').slice(1).join(' ');
   if (!args) {
-    return ctx.reply('⚠️ Please provide a link or message!\nExample: /mtag https://t.me/...');
+    return ctx.reply('⚠️ Please provide a message or link!\nExample: `/tagall https://t.me/...`', { parse_mode: 'Markdown' });
   }
 
-  // Check collected members
   const membersMap = groupMembers.get(chatId);
   if (!membersMap || membersMap.size === 0) {
-    return ctx.reply('⚠️ No members found in cache yet! Let some members chat first or send a message so I can detect them.');
+    return ctx.reply('⚠️ No members found in cache yet! Let some members chat first so I can detect them.');
   }
 
   const membersList = Array.from(membersMap.values());
   const adminName = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
   
-  await ctx.reply(`🚀 Tagging Started!\nInitiated by: ${adminName}`);
+  await ctx.reply(`🚀 **Tagging Process Started!**\nInitiated by: ${adminName}`, { parse_mode: 'Markdown' });
 
   activeTasks.set(chatId, true);
 
@@ -99,13 +103,13 @@ bot.command('mtag', async (ctx) => {
       if (index >= membersList.length) {
         clearInterval(interval);
         activeTasks.delete(chatId);
-        await ctx.reply(`✅ Tagging Completed Successfully for all members!`);
+        await ctx.reply(`✅ **Tagging Completed Successfully!** All members have been tagged.`);
         return;
       }
 
       const currentBatch = membersList.slice(index, index + batchSize);
       
-      // आपके स्क्रीनشॉट वाला फॉर्मेट: ऊपर लिंक, नीचे कॉमा लगाकर सबके क्लिकेबल नाम
+      // स्क्रीनशॉट वाला फॉर्मेट: ऊपर लिंक/मैसेज, नीचे कॉमा लगाकर सबके क्लिकेबल नाम[span_1](start_span)[span_1](end_span)
       let formattedText = `${args}\n\n`;
       const nameLinks = currentBatch.map(m => `[${m.name}](tg://user?id=${m.id})`);
       formattedText += nameLinks.join(', ');
@@ -113,7 +117,7 @@ bot.command('mtag', async (ctx) => {
       await ctx.reply(formattedText, { parse_mode: 'Markdown' });
 
       index += batchSize;
-    }, 4000); // 4 सेकंड का गैप ताकि Telegram बैन (FloodWait) न करे
+    }, 4000); // 4 सेकंड का गैप
 
     activeTasks.set(chatId, interval);
 
@@ -121,46 +125,98 @@ bot.command('mtag', async (ctx) => {
     activeTasks.delete(chatId);
     await ctx.reply('❌ An error occurred during tagging.');
   }
-});
+};
 
-// 3. /mcancel Command
-bot.command('mcancel', async (ctx) => {
+bot.command('tagall', handleTagStart);
+bot.command('run', handleTagStart);
+
+// 3. /stop Command (Tagging रोकने के लिए)
+bot.command('stop', async (ctx) => {
   if (ctx.chat.type === 'private') return;
   if (!(await isAdmin(ctx))) return ctx.reply('❌ Admin only.');
 
   const chatId = ctx.chat.id;
   if (activeTasks.has(chatId)) {
-    clearInterval(activeTasks.get(chatId));
+    const task = activeTasks.get(chatId);
+    if (typeof task === 'object' || typeof task === 'number') {
+      clearInterval(task);
+    }
     activeTasks.delete(chatId);
-    await ctx.reply('🛑 Tagging Cancelled Successfully.');
+    await ctx.reply('🛑 **Tagging Process Stopped Successfully!**');
   } else {
-    await ctx.reply('⚠️ No active tagging process running.');
+    await ctx.reply('⚠️ No active tagging process is currently running in this group.');
   }
 });
 
-// 4. /reload Command
-bot.command('reload', async (ctx) => {
-  if (ctx.chat.type === 'private') return;
-  if (!(await isAdmin(ctx))) return ctx.reply('❌ Admin only.');
-
-  const chatId = ctx.chat.id;
-  if (activeTasks.has(chatId)) {
-    clearInterval(activeTasks.get(chatId));
-    activeTasks.delete(chatId);
-  }
-  await ctx.reply('🔄 Bot reloaded for this group!');
-});
-
-// 5. Owner Panel
+// 4. Owner Panel (/owner) - ओनर के लिए 2 एडवांस बटन्स के साथ
 bot.command('owner', async (ctx) => {
   if (ctx.chat.type !== 'private') return;
   if (ctx.from.id !== OWNER_ID) return ctx.reply('❌ Unauthorized.');
 
-  await ctx.reply(`🛠️ Owner Panel\n- Active Groups: ${activeGroups.size}\n- Active Tasks: ${activeTasks.size}`);
+  const ownerText = 
+`🛠️ **Bot Owner Control Panel**
+
+📊 **Statistics:**
+- Active Groups Tracked: ${activeGroups.size}
+- Active Running Tasks: ${activeTasks.size}
+
+Select an option below:`;
+
+  // ओनर के लिए 2 एडवांस बटन (Active Groups और Broadcast)
+  await ctx.reply(ownerText, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '📊 Active Groups', callback_data: 'owner_groups' },
+          { text: '📢 Broadcast', callback_data: 'owner_broadcast_prompt' }
+        ]
+      ]
+    }
+  });
+});
+
+// Button Actions Handle करना
+bot.action('owner_groups', async (ctx) => {
+  if (ctx.from.id !== OWNER_ID) return ctx.answerCbQuery('❌ Unauthorized.');
+  await ctx.answerCbQuery();
+  await ctx.reply(`📋 **Total Active Groups:** ${activeGroups.size}\nAll connected group IDs are being tracked successfully.`);
+});
+
+bot.action('owner_broadcast_prompt', async (ctx) => {
+  if (ctx.from.id !== OWNER_ID) return ctx.answerCbQuery('❌ Unauthorized.');
+  await ctx.answerCbQuery();
+  await ctx.reply(`📢 **Broadcast Feature:**\nTo broadcast a message to all groups, reply to this message with your text in format: \`/broadcast Your Message\``);
+});
+
+// 5. Broadcast Command for Owner
+bot.command('broadcast', async (ctx) => {
+  if (ctx.from.id !== OWNER_ID) return;
+
+  const broadcastMsg = ctx.message.text.split(' ').slice(1).join(' ');
+  if (!broadcastMsg) {
+    return ctx.reply('⚠️ Please provide a message to broadcast!\nExample: `/broadcast Hello everyone!`');
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  await ctx.reply(`🚀 Broadcasting message to ${activeGroups.size} groups...`);
+
+  for (const chatId of activeGroups) {
+    try {
+      await bot.telegram.sendMessage(chatId, `📢 **Owner Broadcast:**\n\n${broadcastMsg}`, { parse_mode: 'Markdown' });
+      successCount++;
+    } catch (err) {
+      failCount++;
+    }
+  }
+
+  await ctx.reply(`✅ **Broadcast Completed!**\n- Success: ${successCount}\n- Failed: ${failCount}`);
 });
 
 bot.launch().then(() => {
-  console.log('🤖 Bot is running smoothly!');
+  console.log('🤖 Bot is up and running successfully!');
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
